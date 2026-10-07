@@ -1,0 +1,51 @@
+name: The Visionary Group Summarizer
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tvg-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install --omit=dev
+
+      - name: Run summarizer
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: node scripts/summarize.mjs
+
+      - name: Commit state.json if changed
+        run: |
+          git config user.email "tvg-bot@users.noreply.github.com"
+          git config user.name "tvg-bot"
+          git add state.json
+          if git diff --staged --quiet; then
+            echo "No state changes to commit."
+          else
+            git commit -m "state: update processed videos [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push && exit 0
+              echo "Push attempt $i failed, retrying..."
+              sleep 2
+            done
+            echo "Push failed after 3 attempts" && exit 1
+          fi
