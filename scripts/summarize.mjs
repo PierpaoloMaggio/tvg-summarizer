@@ -73,6 +73,31 @@ async function fetchRSS() {
   return entries;
 }
 
+// /shorts/<id> answers 200 for a Short and 303 (redirect to /watch) for a regular video.
+// Fail-open: any other outcome (rate limit, consent redirect, network error) returns false
+// so the video goes on to the normal transcript-length check instead of being lost.
+async function isShort(videoId) {
+  try {
+    const res = await fetch(`https://www.youtube.com/shorts/${videoId}`, {
+      method: 'HEAD',
+      redirect: 'manual',
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+        'accept-language': 'en-US,en;q=0.9',
+        // without the consent cookie YouTube answers with a 302 to the consent page
+        cookie: 'CONSENT=YES+1; SOCS=CAI',
+      },
+    });
+    if (res.status === 200) return true;
+    if (res.status >= 300 && res.status < 400 && (res.headers.get('location') || '').includes('/watch')) return false;
+    console.log(`  shorts check inconclusive (HTTP ${res.status}, location ${(res.headers.get('location') || '').slice(0, 80)}), continuing`);
+    return false;
+  } catch (e) {
+    console.log(`  shorts check failed (${e.message}), continuing`);
+    return false;
+  }
+}
+
 async function fetchTranscript(videoUrl) {
   const url = `https://api.apify.com/v2/acts/${APIFY_ACTOR}/run-sync-get-dataset-items?token=${APIFY_TOKEN}`;
   const res = await fetch(url, {
@@ -201,8 +226,12 @@ async function main() {
 
   for (const entry of newOnes.reverse()) {
     console.log(`Processing ${entry.videoId} — ${entry.title}`);
-    if (/#shorts\b/i.test(entry.title)) {
-      console.log(`  skipped (title contains #shorts)`);
+    // Pre-Apify filters (this channel posts many Shorts): skip without paying for a transcript.
+    let skipReason = null;
+    if (/#\w+/.test(entry.title)) skipReason = 'title contains a hashtag (channel tags its Shorts)';
+    else if (await isShort(entry.videoId)) skipReason = 'YouTube classifies it as a Short';
+    if (skipReason) {
+      console.log(`  skipped (${skipReason})`);
       state.processed.push(entry.videoId);
       if (state.processed.length > 200) state.processed = state.processed.slice(-200);
       await saveState(state);
