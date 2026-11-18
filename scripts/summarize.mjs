@@ -240,6 +240,8 @@ async function main() {
     try {
       const transcript = await fetchTranscript(entry.videoUrl);
       console.log(`  transcript length: ${transcript.length}`);
+      // Empty transcript = Apify failure, not a Short: leave unprocessed so the next run retries.
+      if (transcript.length === 0) throw new Error('empty transcript from Apify, will retry next run');
       if (transcript.length < MIN_TRANSCRIPT_LEN) {
         console.log(`  skipped (too short, likely a Short)`);
         state.processed.push(entry.videoId);
