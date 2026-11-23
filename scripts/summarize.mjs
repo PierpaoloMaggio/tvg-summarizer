@@ -254,13 +254,29 @@ async function main() {
       }
     } catch (e) {
       console.error(`  ERROR on ${entry.videoId}: ${e.message}`);
+      if (isFatal(e)) fatalErrors.push(`${entry.videoId}: ${e.message.slice(0, 200)}`);
     }
     if (state.processed.length > 200) state.processed = state.processed.slice(-200);
     await saveState(state);
   }
 }
 
-main().catch(e => {
+// Account-level failures (no credits, bad/revoked keys, Gmail auth) must fail the run
+// so GitHub sends a failure notification. Per-video failures stay non-fatal.
+const fatalErrors = [];
+function isFatal(e) {
+  const msg = String(e?.message || '');
+  return /^(OpenRouter|Apify) failed: (401|402|403)\b/.test(msg)
+    || e?.code === 'EAUTH' || /Invalid login|Username and Password not accepted/i.test(msg);
+}
+
+main().then(() => {
+  if (fatalErrors.length) {
+    console.error(`FATAL: ${fatalErrors.length} account-level error(s), failing the run:`);
+    for (const f of fatalErrors) console.error(`  - ${f}`);
+    process.exitCode = 1;
+  }
+}).catch(e => {
   console.error(e);
   process.exit(1);
 });
